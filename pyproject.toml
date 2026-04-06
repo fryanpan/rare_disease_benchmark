@@ -1,0 +1,26 @@
+[project]
+name = "rare-disease-benchmark"
+version = "0.1.0"
+description = "RareArena rare disease benchmark — evaluating Claude with freely available tools for diagnostic screening"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "CC-BY-NC-SA-4.0"
+dependencies = [
+    "anthropic>=0.40.0",
+]
+
+[project.optional-dependencies]
+hpo = [
+    "pyhpo>=4.0.0",
+    "mcp>=1.0.0",
+]
+agent = [
+    "claude-agent-sdk>=0.2.83",
+]
+openai-eval = [
+    "openai>=1.0.0",
+    "joblib>=1.3.0",
+]
+all = [
+    "rare-disease-benchmark[hpo,agent,openai-eval]",
+]
