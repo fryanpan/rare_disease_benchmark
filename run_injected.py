@@ -21,13 +21,23 @@ Output: results/opus-hpo-injected/{task}_predictions.jsonl
 import argparse
 import asyncio
 import json
+import socket
 import sys
 import time
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import anthropic
+
+# Force IPv4 — NLM Clinical Tables' IPv6 path is unreachable from some networks
+# and urllib (unlike curl) does not Happy-Eyeballs fail over fast, so a stuck
+# IPv6 SYN can wedge Phase 2 for many minutes per symptom.
+_orig_getaddrinfo = socket.getaddrinfo
+def _ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    return _orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+socket.getaddrinfo = _ipv4_only_getaddrinfo
 
 from config import CONDITIONS, RESULTS_DIR
 from run_condition import (
@@ -98,7 +108,7 @@ def _nlm_lookup_top1(symptom: str) -> str | None:
     )
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "rare-disease-benchmark/1.0"})
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        with urllib.request.urlopen(req, timeout=4) as resp:
             data = json.loads(resp.read().decode())
         if data[1] and len(data) > 3 and data[3]:
             return data[3][0][0]  # HPO code, e.g. "HP:0001324"
@@ -203,15 +213,23 @@ async def extract_all_symptoms(
 def build_all_hpo_contexts(
     items: list[dict],
     symptoms_map: dict[str, list[str]],
+    hpo_workers: int = 32,
 ) -> dict[str, str]:
-    """Run HPO lookup per case. NLM API calls are synchronous, pyhpo is local."""
+    """Run HPO lookup per case. NLM API calls parallelized via threads, pyhpo is local."""
     contexts: dict[str, str] = {}
-    for i, item in enumerate(items):
+
+    def one(item):
         symptoms = symptoms_map.get(item["_id"], [])
         candidates = hpo_candidates_for_symptoms(symptoms) if symptoms else []
-        contexts[item["_id"]] = format_hpo_context(candidates)
-        if (i + 1) % 25 == 0 or (i + 1) == len(items):
-            print(f"  HPO lookup: {i + 1}/{len(items)}")
+        return item["_id"], format_hpo_context(candidates)
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=hpo_workers) as pool:
+        for _id, ctx in pool.map(one, items):
+            contexts[_id] = ctx
+            done += 1
+            if done % 25 == 0 or done == len(items):
+                print(f"  HPO lookup: {done}/{len(items)}")
     return contexts
 
 
@@ -284,6 +302,8 @@ def run_injected_batch(
                         "_id": item["_id"],
                         "model_answer": extract_diagnoses(text),
                         "diagnosis": item["diagnosis"],
+                        "Orpha_id": item.get("Orpha_id"),
+                        "Orpha_name": item.get("Orpha_name"),
                         "ID": item["_id"],
                         "condition": "opus-hpo-injected",
                         "task": task,
