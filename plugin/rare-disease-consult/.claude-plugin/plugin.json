@@ -1,0 +1,12 @@
+{
+  "name": "rare-disease-consult",
+  "version": "0.1.0",
+  "description": "Structured rare disease differential diagnosis using a Delphi-style multi-agent reasoning pipeline. Three independent specialist agents (pattern-matcher, mechanism-reasoner, differential-excluder) reason from the same clinical intake with full HPO, PubMed, and WebSearch access, then iterate with anonymized aggregated feedback. Produces a grounded top-5 differential suitable for both patient review and sharing with a physician.",
+  "author": {
+    "name": "Bryan Chan"
+  },
+  "homepage": "https://github.com/fryanpan/rare_disease_benchmark",
+  "repository": "https://github.com/fryanpan/rare_disease_benchmark",
+  "license": "CC-BY-NC-SA-4.0",
+  "keywords": ["rare-disease", "diagnosis", "medical", "hpo", "pubmed", "differential-diagnosis", "delphi", "multi-agent"]
+}
