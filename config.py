@@ -152,6 +152,123 @@ Output ONLY the final diagnoses in this exact format:
 5. Disease E;"""
 
 
+DIAGNOSIS_PROMPT_DEBATE_TEAM_V2 = """You are the lead physician coordinating a rare disease diagnostic consultation using a Delphi-style independent-round process. This design is grounded in collective-intelligence research on effective diagnostic teams: specialists must reason independently with full tool access, aggregation must preserve rank-order information, and iteration with aggregated feedback consistently outperforms single-shot synthesis.
+
+Here is the clinical case:
+{case}
+
+## ROUND 1 — Three independent specialists, in parallel
+
+Invoke the Agent tool THREE TIMES IN A SINGLE RESPONSE to spawn all three specialists in parallel. Each specialist has full access to the same tools (HPO phenotype lookup, PubMed literature search, WebSearch) and sees only the case text — not each other's outputs.
+
+The three specialists differ by **reasoning style**, not by data source. Each should aggressively use all available tools in service of their style.
+
+**Specialist 1 — Pattern Matcher**
+Prompt:
+"You are a rare disease specialist who reasons by recognizing named clinical gestalts. Your central question: what established rare disease constellation does this case look like? Use PubMed aggressively to find published case reports with similar multi-feature presentations. Use HPO's phenotype_differential_diagnosis to test whether a candidate's canonical phenotype set matches this patient. Use WebSearch for orphanet or OMIM descriptions when you need to confirm a rare syndrome's full feature set.
+
+Case:
+{case}
+
+Produce a ranked top-10 differential. For each, give:
+- Disease name
+- Confidence 1-5 (5 = high)
+- 1-sentence justification naming the specific canonical pattern this case matches
+
+Output format (exactly):
+1. DISEASE | conf=N | reason
+2. ...
+10. ..."
+
+**Specialist 2 — Mechanism Reasoner**
+Prompt:
+"You are a rare disease specialist who reasons from first principles. Your central question: what unifying pathophysiology could generate this cluster of findings? Work backward from symptoms to the underlying mechanism, then forward to named diseases with that mechanism. Use HPO to confirm phenotype-mechanism mapping (does the candidate's phenotype actually produce these findings?). Use PubMed for mechanistic reviews. Use WebSearch for pathway diagrams and gene-disease databases when helpful.
+
+Case:
+{case}
+
+Produce a ranked top-10 differential. For each, give:
+- Disease name
+- Confidence 1-5 (5 = high)
+- 1-sentence justification naming the mechanism that unifies the findings
+
+Output format (exactly):
+1. DISEASE | conf=N | reason
+2. ...
+10. ..."
+
+**Specialist 3 — Differential Excluder**
+Prompt:
+"You are a rare disease specialist who reasons by elimination. Your central question: what common and rare diseases CAN'T this be, and what's left? Generate a broad initial list of plausible candidates (common AND rare), then aggressively disqualify candidates whose canonical features are absent or contradict the case. Use HPO and PubMed to find disqualifying features (what MUST be present, what rules each out).
+
+Case:
+{case}
+
+Produce a ranked top-10 differential of candidates that SURVIVED your exclusion. For each, give:
+- Disease name
+- Confidence 1-5 (5 = high)
+- 1-sentence justification naming the feature that survived your exclusion (or the near-miss it was)
+
+Output format (exactly):
+1. DISEASE | conf=N | reason
+2. ...
+10. ..."
+
+## ROUND 2 — Aggregation and informed revision
+
+After all three specialists return:
+
+1. Compute for each unique candidate disease across all three specialists:
+   - group_score = sum of (11 - rank) * confidence
+   - agreement_count = number of specialists who ranked it in their top-10
+2. Build the top-15 aggregated candidates sorted by group_score.
+
+Then invoke the Agent tool THREE MORE TIMES IN A SINGLE RESPONSE to run each specialist through Round 2. Each specialist sees:
+- The original case text
+- Their own Round 1 top-10 (verbatim)
+- The top-15 aggregated candidates from the group (NOT which specialist proposed which — anonymized)
+
+Round 2 specialist prompt template (use the same reasoning-style role for each):
+"[Same reasoning-style framing as Round 1.]
+
+You previously produced this top-10 in Round 1:
+[specialist's own Round 1 output]
+
+The aggregated group has proposed these 15 candidates with group-scores and agreement counts (anonymized, you don't know which colleagues proposed which):
+[aggregated top-15 with group_score and agreement_count]
+
+Consider whether the group's aggregated view changes your assessment:
+- If the group's top candidates converge with yours, your top-5 is likely high-confidence.
+- If the group converged on a candidate you didn't consider, evaluate it seriously and decide whether to include it.
+- If you're confident in a candidate the group didn't rank, STAND FIRM — rare disease answers often hide in a single specialist's insight that others missed. Do not reflexively follow the group.
+
+Case:
+{case}
+
+Produce your FINAL top-5 with confidence 1-5. If you stood firm on any candidate the group didn't rank, mark it with [FIRM] and give a 1-sentence justification.
+
+Output format (exactly):
+1. DISEASE | conf=N | [FIRM?] reason
+2. ...
+5. ..."
+
+## ROUND 3 — Final synthesis
+
+Apply this logic to produce the final top-5:
+1. **Convergence**: Diseases that appear in 2+ specialists' Round 2 top-5 rank highest.
+2. **Stood-firm with strong justification**: If a single specialist marked a candidate [FIRM] with a substantive reason, include it even without convergence — ESPECIALLY if that specialist's reasoning style is well-suited to the case (e.g., the Mechanism Reasoner standing firm on a metabolic disease the pattern-matcher didn't see).
+3. **Ties broken by**: highest summed confidence across specialists who ranked the candidate.
+
+Output ONLY the final diagnoses in this exact format:
+1. Disease A;
+2. Disease B;
+3. Disease C;
+4. Disease D;
+5. Disease E;
+
+Do not output anything else after the top-5."""
+
+
 # ── Experiment conditions ────────────────────────────────────────────────────
 
 @dataclass
@@ -361,6 +478,31 @@ CONDITIONS = {
         max_tokens=8192,
         sample_n=100,     # minimum for meaningful results; each case spawns 3+ subagents
         concurrency=2,    # low — each case fans out to multiple agents
+    ),
+    # ── Debate-team v2 (Delphi-style, reasoning-style specialists with full tools) ──
+    # Research-grounded redesign: each specialist has full tool access (HPO+PubMed+WebSearch),
+    # split by reasoning style not data source, two independent rounds with aggregated feedback
+    # between rounds, synthesis weighted by convergence AND stood-firm dissent.
+    "opus-debate-team-v2": Condition(
+        name="opus-debate-team-v2",
+        description="Claude Opus 4.6 — Delphi-style debate team (3 reasoning-style specialists, full tools, two rounds)",
+        backend="agent-sdk",
+        model="claude-opus-4-6",
+        prompt_template=DIAGNOSIS_PROMPT_DEBATE_TEAM_V2,
+        tools=["Agent", "WebSearch"],  # full tool access propagates to specialist subagents
+        mcp_servers={
+            "hpo": {
+                "command": "uv",
+                "args": ["run", "python", "hpo_mcp_server.py"],
+            },
+            "pubmed": {
+                "command": "npx",
+                "args": ["-y", "@cyanheads/pubmed-mcp-server"],
+            },
+        },
+        max_tokens=8192,
+        sample_n=100,     # match v1 for apples-to-apples comparison
+        concurrency=2,    # low — each case fans out to 6 subagents (3 per round × 2 rounds)
     ),
 }
 
