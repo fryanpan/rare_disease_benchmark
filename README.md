@@ -1,154 +1,199 @@
 # RareArena Benchmark
 
-*How much can Claude shorten the rare disease diagnostic odyssey — and what does that require?*
+*How much can Claude shorten the rare disease diagnostic odyssey — and what does a patient actually need to do to get the shortening?*
 
-This benchmark evaluates Claude family models on the [RareArena](https://github.com/zhao-zy15/RareArena) dataset (Lancet Digital Health 2026) across a spectrum of capability tiers, from "just ask Claude" to "Agent Teams specialist consultation." The goal is twofold: **quicker diagnosis** and **a faster path to figuring out the mystery** — giving patients and their advocates tools to shorten a process that currently averages 4.7 years with a 60% initial misdiagnosis rate.
+This repo benchmarks Claude on the [RareArena](https://github.com/zhao-zy15/RareArena) RDS dataset (8,562 case reports, *Lancet Digital Health* 2026) across a ladder of **consumer-accessible** capability tiers — from "just ask Claude" at one end, to a Delphi-style multi-agent architecture with HPO, PubMed, and WebSearch at the other. The goal is to map out what a patient (or their advocate) navigating a diagnostic odyssey can actually do today — using only publicly available tools — to compress a process that currently averages 4.7 years and starts with a 60% first-misdiagnosis rate.
+
+---
+
+## Headline results
+
+On RareArena RDS (8,562 case reports, screening task — case text only, before tests):
+
+![Top-1 accuracy across conditions](docs/accuracy_bar_chart.png)
+
+| Tier | Condition | N | Top-1 | Top-5 | $/case |
+|---|---|---|---|---|---|
+| 1 | sonnet-baseline | 8,562 | 36.72% | 59.87% | $0.0013 |
+| 1 | opus-baseline | 8,562 | 41.46% | 63.36% | $0.0065 |
+| 4 | opus-hpo-injected | 500 | 42.00% | 59.40% | $0.009 |
+| 2 | sonnet-thinking\* | 500 | 41.80% | 54.20% | $0.046 |
+| 3 | opus-structured-prompt | 500 | 47.80% | 68.60% | $0.036 |
+| 2 | opus-thinking | 500 | 48.60% | 68.80% | $0.13 |
+| 6 | opus-debate-team (v1 naive) | 300 | 48.66% | 68.00% | $0.20 |
+| 5 | opus-agent-hpo-pubmed | 500 | 51.80% | 71.80% | $0.15 |
+| **6** | **opus-debate-team-v2 (Delphi)** | **300** | **58.34%** | **77.33%** | **$0.90** |
+
+\* `sonnet-thinking` has a 27.6% parse-error rate from a harness bug that chokes on Sonnet's verbose thinking-mode output. Real numbers are higher than reported — don't cite as a clean comparison until the parser is hardened.
 
 ### Three reference points
 
-**Floor — general physician (~26% Top-1):** This is what most rare disease patients experience at first contact. Beating this is the threshold that matters most for real-world impact — it means an unassisted Claude could give a patient something more accurate than their first doctor visit, before any tests are ordered.
+- **Physician floor ~26% Top-1.** What most rare disease patients get at first contact (general physician, from the RareArena paper). Beating this is the threshold that matters most: it means an unassisted Claude is already more accurate than the patient's first doctor visit, before any tests.
+- **GPT-4o (no tools) 33.05% Top-1.** The paper's frontier-LLM baseline on RDS. Claude Opus baseline (41.46%) clears this by ~8pp at the cheapest tier.
+- **DeepRare 54.67% Top-1.** The institutional ceiling: a 6-agent custom system (SJTU, *Nature* 2026) with HPO+OMIM+Orphanet databases, 40 specialized tools, deployed at 600+ hospitals. Reported on the same RareArena RDS task for apples-to-apples comparison.
 
-**Ceiling — DeepRare (57%):** What's achievable with full institutional access: a 6-agent custom system with HPO+OMIM+Orphanet databases, deployed at 600+ medical institutions. This is the benchmark for what the medical system *can* do when it has complete access to your records and the right tools. Most patients won't have this.
+### The headline
 
-**The gap is the opportunity:** A patient with no specialist access, no institutional backing, just Claude and freely available tools — where do they land? If they can approach or exceed physician baseline, that's a meaningful compression of the diagnostic odyssey. If they can approach DeepRare, that's a profound shift in who has access to expert-level rare disease screening.
+**opus-debate-team-v2** — three reasoning-style specialists, full tool access (HPO + PubMed + WebSearch), Delphi-style two-round aggregation — hits **58.34% Top-1 / 77.33% Top-5** at N=300. That's **+16.88pp over opus-baseline** (p<0.0001) and **directionally matches DeepRare-GPT-4o's 54.67%** on the same benchmark.
+
+The +3.67pp over DeepRare is **not statistically significant** (p≈0.10) — the right framing is "matches" or "in range", not "beats." The striking thing isn't that Claude edges a published institutional system — it's that a consumer-accessible setup (single Claude Code user with public MCP servers) can get there at all.
+
+### Cost
+
+![Cost per case on log scale](docs/cost_per_case_chart.png)
+
+Cost per case ranges over **three orders of magnitude**: from $0.0013 (unassisted Sonnet) to $0.90 (full Delphi debate team). For reference: an in-person rare disease specialist consultation runs ~$200. Even the peak-accuracy configuration is ~200× cheaper than that anchor, though of course it's not a substitute — the output is research assistance for a physician visit, not a diagnosis.
+
+---
+
+## What each tier represents
+
+Every condition maps to a specific scenario a patient or their advocate could realistically set up, ordered from "available to anyone" to "requires real technical affordances":
+
+### Tier 1 — "I asked Claude"
+Just claude.ai or a basic API call. No tools, no thinking, one shot.
+
+| Condition | N | What it represents |
+|---|---|---|
+| `sonnet-baseline` | 8,562 | Default claude.ai with Sonnet |
+| `opus-baseline` | 8,562 | Claude.ai Pro with Opus |
+
+**Finding:** Opus baseline (41.46%) already clears the physician floor (~26%) by 15pp and GPT-4o (33.05%) by 8pp. For free, no skill required.
+
+### Tier 2 — "I asked Claude to think carefully"
+Extended thinking mode on claude.ai Pro.
+
+| Condition | N | What it represents |
+|---|---|---|
+| `opus-thinking` | 500 | Opus with adaptive extended thinking |
+| `sonnet-thinking` | 500 | Sonnet version (cheaper, but parse-contaminated) |
+
+**Finding:** +7pp over baseline on Top-1. Modest but real, at ~20× the cost per case.
+
+### Tier 3 — "I gave Claude better instructions"
+Same model, same lack of tools, just a structured clinical-reasoning prompt.
+
+| Condition | N | What it represents |
+|---|---|---|
+| `opus-structured-prompt` | 500 | Problem representation → mechanism → differential → ranking |
+
+**Finding:** +6pp over baseline. Matches `opus-thinking` for ~4× less cost. If you can only do one thing, a better prompt is the highest-leverage move.
+
+### Tier 4 — "I ran code to look things up for Claude"
+Technical tier. A Python pipeline extracts symptoms with Haiku, maps them to HPO/Orphanet candidates programmatically, and injects the candidates into the prompt.
+
+| Condition | N | What it represents |
+|---|---|---|
+| `opus-hpo-injected` | 500 | Programmatic HPO lookup, candidates injected as context |
+
+**Finding:** +0.5pp over baseline. The controlled injection test shows that static grounding alone doesn't help — the model needs to *decide* when and how to query the knowledge source for it to add value. This is the control that motivates Tier 5.
+
+### Tier 5 — "I used Claude Code with medical MCPs"
+Available today to anyone willing to install the CLI + two MCP servers.
+
+| Condition | N | What it represents |
+|---|---|---|
+| `opus-agent-hpo-pubmed` | 500 | Claude Code + HPO MCP (pyhpo) + PubMed MCP (free), Opus chooses when to query |
+
+**Finding:** +10pp over baseline on Top-1. Agentic tool use — where the model decides when to consult HPO vs. PubMed vs. its own knowledge — is where tool grounding starts materially working.
+
+### Tier 6 — "Multiple Claude specialists consulted on my case"
+Multi-agent. The lead agent spawns three specialist subagents; each reasons independently before synthesis.
+
+| Condition | N | What it represents |
+|---|---|---|
+| `opus-debate-team` (v1) | 300 | Naive: lead gathers evidence once, 3 tool-less specialists reason from it |
+| `opus-debate-team-v2` | 300 | **Delphi**: 3 reasoning-style specialists, each with full tools, two independent rounds with aggregated anonymized feedback |
+
+**Finding:** v1 (48.66%) performs similarly to `opus-thinking` — a naive committee doesn't add value over one well-prompted agent. **v2 (58.34%)** is the architectural difference: split specialists by *reasoning style* (pattern matcher, mechanism reasoner, differential excluder), give each full tool access, run two rounds, preserve stood-firm dissent. +9.68pp over v1 (p=0.017) and +6.54pp over the best single-agent condition (p=0.07 — approaching significance).
+
+---
+
+## Statistical solidity of the key comparisons
+
+At the final sample sizes:
+
+| Comparison | Δ Top-1 | Statistical significance |
+|---|---|---|
+| v2 vs. opus-baseline | +16.88pp | Rock solid (z=5.8, p<0.0001) |
+| v2 vs. debate-v1 | +9.68pp | Solid (z=2.38, p=0.017) |
+| v2 vs. opus-thinking | +9.74pp | Solid (z=2.65, p=0.008) |
+| v2 vs. agent-hpo-pubmed | +6.54pp | Approaching (z=1.81, p=0.07) |
+| v2 vs. DeepRare-GPT-4o | +3.67pp | Not significant (p≈0.10) — "matches", not "beats" |
+
+---
+
+## What to read next
+
+- **[METHODOLOGY.md](METHODOLOGY.md)** — experimental design: which cases, which N, why. The story arc behind the tier structure.
+- **[AUDIT.md](AUDIT.md)** — honest self-audit against the "did Claude cheat by recognizing training data?" concern. Four tests: input isolation, case-text leakage, agent-output surface scan, date-gate memorization, tool-lift-by-year. Open caveats (poison test proposed but not run) are documented.
+- **[plugin/rare-disease-consult/](plugin/rare-disease-consult/)** — a Claude Code plugin packaging the v2 architecture as an installable diagnostic consultation skill, with safety checks and dual-audience output.
+
+---
 
 ## Setup
 
 ```bash
-# Set your Anthropic API key
-export ANTHROPIC_API_KEY=your-key-here
+# Anthropic API key required
+export ANTHROPIC_API_KEY=<your-key>
 
-# Install dependencies
-uv sync                    # core (anthropic SDK)
-uv sync --extra hpo        # + HPO/Orphanet phenotype tools (pyhpo, MCP)
-uv sync --extra agent      # + Agent SDK conditions
-uv sync --extra all        # everything
-
-# Download RareArena data (~25MB, one-time)
-uv run python download_data.py
-
-# Estimate costs before running
-uv run python estimate_cost.py
+uv sync --extra all                    # everything (core + HPO + Agent SDK)
+uv run python download_data.py         # pulls RareArena (~25MB) one-time
+uv run python estimate_cost.py         # dry-run before spending
 ```
 
-## Running
+## Running a condition
 
 ```bash
-# Smoke test (5 cases, ~$0.05)
+# Smoke test first (5 cases, ~$0.05 for baseline)
 uv run python run_condition.py --condition opus-baseline --task RDS --sample 5
+
+# Full condition (resumable, safe to interrupt)
+uv run python run_condition.py --condition opus-baseline --task RDS
+
+# Score predictions against ground truth
 uv run python eval_condition.py --condition opus-baseline --task RDS
 uv run python metrics.py --condition opus-baseline --task RDS
 
-# Full condition (runs until done; safe to interrupt and resume)
-uv run python run_condition.py --condition opus-baseline --task RDS
-uv run python eval_condition.py --condition opus-baseline --task RDS
+# HPO-injection uses a different runner (three-phase Haiku→HPO→Opus pipeline)
+uv run python run_injected.py --task RDS
 
-# HPO-injected condition (uses its own runner: Haiku extraction → HPO lookup → Opus batch)
-uv run python run_injected.py --task RDS --sample 5   # smoke test
-uv run python run_injected.py --task RDS              # full run
-uv run python eval_condition.py --condition opus-hpo-injected --task RDS
-
-# View all results
-uv run python metrics.py --all
+# Agent/debate-team conditions need node in PATH for PubMed MCP
+PATH="$HOME/.nvm/versions/node/v24.14.0/bin:$PATH" \
+  uv run python run_condition.py --condition opus-debate-team-v2 --task RDS
 ```
 
-## Conditions
+See [METHODOLOGY.md](METHODOLOGY.md) for per-condition rationale on sample sizes.
 
-Focus: **RDS only** (screening — before any diagnostic tests are ordered).
+## Benchmark campaign cost
 
-Each condition maps to a point on the consumer accessibility ladder. Edit `config.py` to adjust sample sizes or add conditions.
+Approximate Anthropic API spend to reproduce the results above:
 
-### Tier 1 — "I asked Claude" (~$58)
-*Available today to anyone with claude.ai or API access.*
+| Condition | N | ~$ |
+|---|---|---|
+| sonnet-baseline | 8,562 | $11 |
+| opus-baseline | 8,562 | $56 |
+| opus-hpo-injected | 500 | $5 |
+| sonnet-thinking | 500 | $23 |
+| opus-structured-prompt | 500 | $18 |
+| opus-thinking | 500 | $65 |
+| opus-debate-team v1 | 300 | $60 |
+| opus-agent-hpo-pubmed | 500 | $75 |
+| opus-debate-team-v2 | 300 | $270 |
+| Haiku evaluator | all | ~$15 |
+| **Total** | | **~$600** |
 
-| Condition | Model | Sample | Est. $ | What this represents |
-|-----------|-------|--------|--------|----------------------|
-| `sonnet-baseline` | Sonnet 4.6 | Full 8,562 | $21 | Claude.ai default model, no tools |
-| `opus-baseline` | Opus 4.6 | Full 8,562 | $37 | Claude.ai Pro / best available, no tools |
-
-### Tier 2 — "I asked Claude to think carefully" (~$34)
-*Available today on claude.ai Pro (extended thinking).*
-
-| Condition | Model | Sample | Est. $ | What this represents |
-|-----------|-------|--------|--------|----------------------|
-| `opus-thinking` | Opus 4.6 + thinking | 500 | $21 | Claude.ai Pro with extended reasoning enabled |
-| `sonnet-thinking` | Sonnet 4.6 + thinking | 500 | $13 | Faster/cheaper reasoning option |
-
-### Tier 3 — "I gave Claude better instructions" (~$2)
-*Available to anyone — just a better prompt.*
-
-| Condition | Model | Sample | Est. $ | What this represents |
-|-----------|-------|--------|--------|----------------------|
-| `opus-structured-prompt` | Opus 4.6 | 500 | $2 | Structured clinical reasoning prompt (no tools needed) |
-
-### Tier 4 — "I looked things up and gave Claude the results" (~$3)
-*Technical users with Python. Run `run_injected.py`, not `run_condition.py`.*
-
-| Condition | Model | Sample | Est. $ | What this represents |
-|-----------|-------|--------|--------|----------------------|
-| `opus-hpo-injected` | Opus 4.6 + HPO lookup | 500 | $3 | Programmatic HPO/Orphanet lookup injected as context |
-
-### Tier 5 — "I used Claude Code to search for me" (~$32)
-*Available today via Claude Code + freely available MCP servers.*
-
-| Condition | Model | Sample | Est. $ | What this represents |
-|-----------|-------|--------|--------|----------------------|
-| `opus-agent-sdk` | Opus 4.6 + web search | 200 | $6 | Claude Code with built-in web search |
-| `opus-agent-pubmed` | Opus 4.6 + PubMed | 100 | $4 | Claude Code + PubMed MCP (35M articles, free) |
-| `opus-agent-hpo` | Opus 4.6 + HPO MCP | 200 | $6 | Claude Code + HPO/Orphanet MCP (pyhpo, free) |
-| `opus-agent-hpo-pubmed` | Opus 4.6 + HPO + PubMed | 200 | $10 | Claude Code + both medical MCPs |
-
-### Tier 6 — "Multiple Claude specialists consulted on my case" (~$36)
-*Coming soon as Agent Teams roll out more broadly.*
-
-| Condition | Model | Sample | Est. $ | What this represents |
-|-----------|-------|--------|--------|----------------------|
-| `opus-iterative` | Opus 4.6, 4-turn refinement | 200 | $16 | Sequential hypothesis refinement (agent workflow) |
-| `opus-debate-team` | Opus 4.6 × 3 specialists | 100 | $20 | Independent specialist subagents (Agent Teams) |
-
-**Grand total (RDS only): ~$155**
-
-## Key features
-
-- **Resume support** — skips already-processed cases; safe to interrupt
-- **Batch API** — 50% cost discount for baseline conditions
-- **Claude Haiku evaluator** — 10x cheaper than GPT-4o for scoring
-- **Cost estimator** — dry-run before committing
-
-## Baselines
-
-### Paper baselines (GPT-4o, updated eval March 2026)
-
-| Task | Top-1 Total | Top-1 Exact | Top-5 Total |
-|------|-------------|-------------|-------------|
-| RDS (screening) | 33.05% | 23.13% | 56.86% |
-| RDC (confirmation) | 64.24% | 49.72% | 85.92% |
-
-### Human performance
-- **General physicians: ~26.3% Top-1** — the most important threshold; beating this means real impact for patients without specialist access
-- Expert rare disease specialists: ~66%
-- Average diagnostic delay: 4.7 years; 60% misdiagnosis rate
-
-### AI reference points
-- **GPT-4o (no tools)**: 33.05% RDS / 64.24% RDC — frontier LLM baseline
-- **DeepRare (Nature 2026)**: 57–69% — 6-agent custom system with HPO+OMIM+Orphanet, institutional access only. Represents the ceiling for what the medical system can do when fully engaged with your case.
-- No published Claude results on RareArena exist; this benchmark fills that gap
-
-### RDS vs. RDC — two stages of the same journey
-**RDS (current focus):** Symptoms only, before tests. The hardest task and the highest-leverage one — this is where the 4.7-year odyssey begins.
-
-**RDC (natural next phase):** Full case report + all test results. A different patient scenario: someone who has accumulated labs, imaging, and specialist notes but still doesn't have a confirmed diagnosis. Can Claude synthesize a complete clinical picture? With GPT-4o already at 64% here, tools should push that significantly higher. Running RDC conditions after RDS baselines are in will complete the picture of what Claude can do across the full diagnostic journey.
-
-**Note on Top-5 recall:** From a patient empowerment perspective, Top-5 is often more meaningful than Top-1. If the correct disease appears anywhere in Claude's Top-5, that's often enough to change a diagnostic trajectory — a patient can bring that hypothesis to their next appointment and ask for the right test. Top-5 scores run 20–30 points higher than Top-1 across all conditions.
+Plus exploratory smoke tests and re-runs, the full campaign cost roughly **$700** of Anthropic API spend. Use `estimate_cost.py` before launching any condition.
 
 ## Attribution
 
-This benchmark builds on the [RareArena](https://github.com/zhao-zy15/RareArena) dataset:
+Benchmark dataset: [RareArena](https://github.com/zhao-zy15/RareArena) (Zhao et al., *Lancet Digital Health* 2026). Licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/), inherited here.
 
-> Zhao et al. "RareArena: A Comprehensive Benchmark for Rare Disease Diagnosis." *The Lancet Digital Health*, 2026.
+Comparison system: [DeepRare](https://www.nature.com/articles/s41586-025-10097-9) (Zhao et al., *Nature* 2026) — SJTU's 6-agent institutional rare-disease AI. Top-1 54.67% on RareArena RDS used as the apples-to-apples comparison.
 
-Licensed under [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/). This repository inherits the same license.
+HPO/Orphanet data: via [pyhpo](https://github.com/Centogene/pyhpo) (Centogene) and the [NLM Clinical Tables API](https://clinicaltables.nlm.nih.gov/). PubMed MCP: [@cyanheads/pubmed-mcp-server](https://github.com/cyanheads/pubmed-mcp-server).
 
 ## Related
 
-- **[health-coach](https://github.com/fryanpan/health-coach)** *(coming soon)* — An open-source AI health coaching agent for navigating complex medical journeys. The best-performing diagnostic method from this benchmark will be integrated as a built-in capability.
+- **[rare-disease-consult](plugin/rare-disease-consult/)** — the v2 architecture packaged as a Claude Code plugin, runnable on your own cases via an interactive diagnostic consultation workflow.
+- **[health-coach](https://github.com/fryanpan/health-coach)** *(in progress)* — an open-source AI health coaching agent for navigating complex medical journeys. The `opus-debate-team-v2` architecture is slated for integration as a built-in capability.
