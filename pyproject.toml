@@ -13,7 +13,7 @@ dependencies = [
 [project.optional-dependencies]
 hpo = [
     "pyhpo>=4.0.0",
-    "mcp>=1.0.0",
+    "mcp>=1.28.1",
 ]
 agent = [
     "claude-agent-sdk>=0.1.59",
