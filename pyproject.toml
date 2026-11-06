@@ -13,10 +13,10 @@ dependencies = [
 [project.optional-dependencies]
 hpo = [
     "pyhpo>=4.0.0",
-    "mcp>=1.28.1",
+    "mcp>=1.30.0,<2",
 ]
 agent = [
-    "claude-agent-sdk>=0.1.59",
+    "claude-agent-sdk>=0.2.121",
 ]
 openai-eval = [
     "openai>=1.0.0",
