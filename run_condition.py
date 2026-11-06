@@ -402,7 +402,7 @@ async def run_agent_sdk(
                         # Swap cyanheads MCP for our filtered Python wrapper
                         cfg_copy = {
                             "command": "uv",
-                            "args": ["run", "--no-project", "--with", "mcp",
+                            "args": ["run", "--no-project", "--with", "mcp>=1.30.0,<2",
                                      "python", "audit_filtered_pubmed_mcp.py"],
                             "env": {
                                 "BLOCK_PMCID": target_pmcid,
@@ -425,7 +425,7 @@ async def run_agent_sdk(
                         env[k] = os.environ[k]
                 per_case_mcp["search"] = {
                     "command": "uv",
-                    "args": ["run", "--no-project", "--with", "mcp",
+                    "args": ["run", "--no-project", "--with", "mcp>=1.30.0,<2",
                              "python", "audit_filtered_search_mcp.py"],
                     "env": env,
                 }
